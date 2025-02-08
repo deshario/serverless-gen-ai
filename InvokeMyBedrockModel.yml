@@ -1,0 +1,71 @@
+service: bedrock-prompt-processor
+
+plugins:
+  - serverless-step-functions
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  stackName: bedrock-prompt-processor-stack
+  region: ap-southeast-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - states:StartExecution
+        - states:DescribeExecution
+        - states:StopExecution
+      Resource: "*"
+
+    - Effect: Allow
+      Action:
+        - bedrock:InvokeModel
+      Resource:
+        - arn:aws:bedrock:${self:provider.region}::foundation-model/anthropic.claude-instant-v1:2
+
+# functions:
+#   processUserPrompt:
+#     handler: handler.main
+#     environment:
+#       STATE_MACHINE_ARN: !Ref InvokeMyBedrockModel
+#     events:
+#       - http:
+#           path: process-prompt
+#           method: post
+#           cors: true
+
+stepFunctions:
+  stateMachines:
+    InvokeMyBedrockModel:
+      name: InvokeMyBedrockModel
+      definition:
+        Comment: "A state machine that processes a user prompt using Amazon Bedrock"
+        StartAt: InvokeBedrockForTextGeneration
+        States:
+          InvokeBedrockForTextGeneration:
+            Type: Task
+            Resource: arn:aws:states:::bedrock:invokeModel
+            Parameters:
+              ModelId: "anthropic.claude-3-haiku-20240307-v1:0"
+              ContentType: "application/json"
+              Accept: "application/json"
+              Body:
+                anthropic_version: "bedrock-2023-05-31"
+                max_tokens: 200
+                messages:
+                  - role: user
+                    content:
+                      - type: text
+                        text.$: "$.prompt"
+            ResultPath: $.bedrockResponse
+            End: true
+# resources:
+#   Resources:
+#     ApiGatewayRestApi:
+#       Type: AWS::ApiGateway::RestApi
+#       Properties:
+#         Name: BedrockPromptProcessorAPI
+#   Outputs:
+#     StateMachineArn:
+#       Description: "The ARN of the Step Functions state machine"
+#       Value:
+#         Ref: InvokeMyBedrockModel

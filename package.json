@@ -1,0 +1,13 @@
+{
+  "name": "aws-serverless-gen-ai",
+  "version": "1.0.0",
+  "license": "ISC",
+  "description": "AWS Step Functions with Bedrock integration",
+  "scripts": {
+    "deploy": "serverless deploy --config",
+    "cleanup": "serverless remove --config"
+  },
+  "devDependencies": {
+    "serverless-step-functions": "^3.21.2"
+  }
+}
