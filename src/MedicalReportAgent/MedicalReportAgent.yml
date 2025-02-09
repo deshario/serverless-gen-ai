@@ -1,0 +1,156 @@
+service: medical-report-processor
+
+plugins:
+  - serverless-step-functions
+
+provider:
+  name: aws
+  runtime: python3.11
+  stackName: medical-report-processor-stack
+  region: ap-southeast-1
+
+functions:
+  processPDFReportWithTextract:
+    description: "Extracts text from a medical PDF report using Textract"
+    handler: processPDFReportWithTextract.handler
+    role: !GetAtt CustomRole.Arn
+
+  saveProcessedReport:
+    description: "Stores the processed medical report into an S3 bucket"
+    handler: saveProcessedReport.handler
+    role: !GetAtt CustomRole.Arn
+
+  scheduleDoctorAppointment:
+    description: "Schedules a doctor's appointment based on the processed report from llm"
+    handler: scheduleDoctorAppointment.handler
+    role: !GetAtt CustomRole.Arn
+
+stepFunctions:
+  stateMachines:
+    MedicalReportAgent:
+      name: MedicalReportAgent
+      role: !GetAtt CustomRole.Arn # Attach the custom IAM role
+      definition:
+        Comment: "A state machine that processes a user prompt using Amazon Bedrock"
+        StartAt: ReadReportFromS3
+        States:
+          ReadReportFromS3:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:textract:startDocumentTextDetection
+            Parameters:
+              DocumentLocation:
+                S3Object:
+                  Bucket.$: $.bucketName
+                  Name.$: $.fileName
+            Next: WaitForTextract
+            ResultPath: $.TextractJob
+
+          WaitForTextract:
+            Type: Wait
+            Seconds: 10
+            Next: GetReportTextFromTextract
+
+          GetReportTextFromTextract:
+            Type: Task
+            Resource: !Sub "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:${self:service}-${sls:stage}-processPDFReportWithTextract"
+            Parameters:
+              JobId.$: $.TextractJob.JobId
+              OutputBucket.$: $.outputBucket
+              FileName.$: $.fileName
+            Next: BuildPromptForBedrock
+            ResultPath: $.ProcessedData
+
+          BuildPromptForBedrock:
+            Type: Pass
+            Parameters:
+              prompt.$: >-
+                States.Format('You are a medical expert. Review the blood report and
+                provide a clear, simple summary.
+
+                Begin with the patient\'s name.
+
+                List only the key findings in simple words (avoid unnecessary details).
+
+                State the overall health condition as \'Good\' or \'Critical\'.
+
+                Give 3-4 short and clear recommendations based on the report.
+
+                Note: Use everyday language. Keep it simple and easy for an average
+                patient to understand.
+
+                Blood Report:
+
+                {}', $.ProcessedData.ExtractedText)
+            Next: CallBedrockModel
+            ResultPath: $.PromptData
+
+          CallBedrockModel:
+            Type: Task
+            Resource: arn:aws:states:::bedrock:invokeModel
+            Parameters:
+              ModelId: "anthropic.claude-3-haiku-20240307-v1:0"
+              ContentType: "application/json"
+              Accept: "application/json"
+              Body:
+                anthropic_version: bedrock-2023-05-31
+                max_tokens: 200
+                messages:
+                  - role: user
+                    content:
+                      - type: text
+                        text.$: $.PromptData.prompt
+            Next: SaveProcessedReport
+            ResultPath: $.SummaryResponse
+
+          SaveProcessedReport:
+            Type: Task
+            Resource: !Sub "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:${self:service}-${sls:stage}-saveProcessedReport"
+            Parameters:
+              SummaryText.$: $.SummaryResponse.Body.content[0].text
+              OutputBucket.$: $.outputBucket
+              FileName.$: $.fileName
+            Next: DetectHealthCondition
+            ResultPath: $.SavedSummary
+
+          DetectHealthCondition:
+            Type: Choice
+            Choices:
+              - Variable: $.SummaryResponse.Body.content[0].text
+                StringMatches: "*Overall Health Condition: Critical*"
+                Next: BookDoctorAppointment
+            Default: EndProcess
+
+          BookDoctorAppointment:
+            Type: Task
+            Resource: !Sub "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:${self:service}-${sls:stage}-scheduleDoctorAppointment"
+            Parameters:
+              SummaryText.$: $.SummaryResponse.Body.content[0].text
+              DoctorEmail: sunil.d@taskworld.com
+            End: true
+
+          EndProcess:
+            Type: Pass
+            End: true
+
+resources:
+  Resources:
+    CustomRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - states.amazonaws.com
+                  - lambda.amazonaws.com
+              Action:
+                - "sts:AssumeRole"
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/AmazonS3FullAccess
+          - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+          - arn:aws:iam::aws:policy/AmazonBedrockFullAccess
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+          - arn:aws:iam::aws:policy/AmazonTextractFullAccess
+          - arn:aws:iam::aws:policy/AmazonSESFullAccess
