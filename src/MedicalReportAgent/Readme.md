@@ -1,1 +1,1 @@
-![MedicalReportAgent](https://i.gyazo.com/a16fe86298adc8575f90d9b2beb3dff1.png)
+![MedicalReportAgent](https://i.gyazo.com/0c8d1d774bf8fdc134cec80912d06382.png)
