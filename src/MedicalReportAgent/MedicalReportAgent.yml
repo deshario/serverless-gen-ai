@@ -117,10 +117,10 @@ stepFunctions:
             Choices:
               - Variable: $.SummaryResponse.Body.content[0].text
                 StringMatches: "*Overall Health Condition: Critical*"
-                Next: BookDoctorAppointment
+                Next: ScheduleDoctorAppointment
             Default: EndProcess
 
-          BookDoctorAppointment:
+          ScheduleDoctorAppointment:
             Type: Task
             Resource: !Sub "arn:aws:lambda:${self:provider.region}:${aws:accountId}:function:${self:service}-${sls:stage}-scheduleDoctorAppointment"
             Parameters:
